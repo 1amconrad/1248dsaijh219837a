@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRM SaaS - Mini</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/date-fns/2.29.3/date_fns.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { jsPDF } = window.jspdf;
+
+        // ==========================================
+        // 1. CONFIGURAÇÃO DO SUPABASE
+        // Substitua com os dados do seu painel Supabase
+        // ==========================================
+        const SUPABASE_URL = 'https://cbddqpnpumxuxskmgxiq.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNiZGRxcG5wdW14dXhza21neGlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMDIyOTEsImV4cCI6MjA5MDc3ODI5MX0._skePv3tfM8WGp5kENT17aRW25Bbi5LFSbiHDIP78No';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // ==========================================
+        // 2. COMPONENTE DE LOGIN
+        // ==========================================
+        function Login({ onLogin }) {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState(null);
+
+            const handleAuth = async (isSignUp) => {
+                setLoading(true);
+                setError(null);
+                const { data, error } = isSignUp 
+                    ? await supabase.auth.signUp({ email, password })
+                    : await supabase.auth.signInWithPassword({ email, password });
+                
+                if (error) setError(error.message);
+                else if (!isSignUp && data.session) onLogin(data.session.user);
+                else if (isSignUp) alert("Cadastro realizado! Faça login.");
+                setLoading(false);
+            };
+
+            return (
+                <div class="flex h-screen items-center justify-center bg-gray-100">
+                    <div class="bg-white p-8 rounded-xl shadow-lg w-96">
+                        <h2 class="text-2xl font-bold text-center text-blue-600 mb-6">CRM SaaS</h2>
+                        {error && <div class="bg-red-100 text-red-600 p-3 rounded mb-4 text-sm">{error}</div>}
+                        <input type="email" placeholder="E-mail" class="w-full p-3 border rounded mb-4" value={email} onChange={e => setEmail(e.target.value)} />
+                        <input type="password" placeholder="Senha" class="w-full p-3 border rounded mb-6" value={password} onChange={e => setPassword(e.target.value)} />
+                        <button onClick={() => handleAuth(false)} disabled={loading} class="w-full bg-blue-600 text-white p-3 rounded font-bold mb-2 hover:bg-blue-700">Entrar</button>
+                        <button onClick={() => handleAuth(true)} disabled={loading} class="w-full bg-gray-100 text-gray-700 p-3 rounded font-bold hover:bg-gray-200">Criar Conta</button>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 3. COMPONENTE DASHBOARD (Com Gerador de PDF)
+        // ==========================================
+        function Dashboard({ user }) {
+            const [stats, setStats] = useState({ clients: 0, salesCount: 0, totalRevenue: 0 });
+
+            useEffect(() => {
+                fetchStats();
+            }, []);
+
+            const fetchStats = async () => {
+                const { count: clientsCount } = await supabase.from('clients').select('*', { count: 'exact', head: true });
+                const { data: sales } = await supabase.from('sales').select('amount');
+                const totalRevenue = sales?.reduce((acc, curr) => acc + Number(curr.amount), 0) || 0;
+                setStats({ clients: clientsCount || 0, salesCount: sales?.length || 0, totalRevenue });
+            };
+
+            const generatePDF = async () => {
+                // Pega do início ao fim do mês atual para simplificar o exemplo
+                const today = new Date();
+                const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+                const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString();
+
+                const { data: sales } = await supabase.from('sales').select('*, clients(name)').gte('sale_date', startDate).lte('sale_date', endDate);
+                if (!sales || sales.length === 0) return alert("Nenhuma venda neste mês para gerar relatório.");
+
+                const doc = new jsPDF();
+                doc.setFontSize(20);
+                doc.text('Relatorio de Vendas', 20, 20);
+                doc.setFontSize(12);
+                doc.text(`Total faturado no periodo: R$ ${sales.reduce((a, b) => a + Number(b.amount), 0).toFixed(2)}`, 20, 30);
+                
+                let y = 50;
+                doc.text('Data', 20, y); doc.text('Cliente', 60, y); doc.text('Valor', 150, y);
+                doc.line(20, y+2, 190, y+2);
+                
+                y+=10;
+                sales.forEach(sale => {
+                    doc.text(sale.sale_date, 20, y);
+                    doc.text(sale.clients?.name || 'Cliente Excluído', 60, y);
+                    doc.text(`R$ ${Number(sale.amount).toFixed(2)}`, 150, y);
+                    y+=10;
+                });
+                
+                doc.save(`relatorio-${today.getMonth()+1}-${today.getFullYear()}.pdf`);
+            };
+
+            return (
+                <div>
+                    <div class="flex justify-between items-center mb-8">
+                        <h2 class="text-3xl font-bold text-gray-800">Visão Geral</h2>
+                        <button onClick={generatePDF} class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                            <i class="fas fa-file-pdf"></i> Gerar Relatório do Mês
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white p-6 rounded-xl shadow-sm border">
+                            <h3 class="text-gray-500 text-sm">Total de Clientes</h3>
+                            <p class="text-3xl font-bold mt-2">{stats.clients}</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-xl shadow-sm border">
+                            <h3 class="text-gray-500 text-sm">Total de Vendas</h3>
+                            <p class="text-3xl font-bold mt-2">{stats.salesCount}</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-l-4 border-l-green-500">
+                            <h3 class="text-gray-500 text-sm">Faturamento</h3>
+                            <p class="text-3xl font-bold text-green-600 mt-2">R$ {stats.totalRevenue.toFixed(2)}</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 4. COMPONENTE CLIENTES
+        // ==========================================
+        function Clients({ user }) {
+            const [clients, setClients] = useState([]);
+            const [name, setName] = useState('');
+            const [phone, setPhone] = useState('');
+
+            useEffect(() => { fetchClients(); }, []);
+
+            const fetchClients = async () => {
+                const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
+                setClients(data || []);
+            };
+
+            const addClient = async (e) => {
+                e.preventDefault();
+                await supabase.from('clients').insert([{ user_id: user.id, name, phone }]);
+                setName(''); setPhone('');
+                fetchClients();
+            };
+
+            const deleteClient = async (id) => {
+                if(confirm("Tem certeza?")) {
+                    await supabase.from('clients').delete().eq('id', id);
+                    fetchClients();
+                }
+            };
+
+            return (
+                <div>
+                    <h2 class="text-3xl font-bold mb-6">Clientes</h2>
+                    <form onSubmit={addClient} class="bg-white p-6 rounded-xl shadow-sm mb-8 flex gap-4 items-end">
+                        <div class="flex-1">
+                            <label class="text-sm text-gray-600">Nome *</label>
+                            <input required class="w-full p-2 border rounded mt-1" value={name} onChange={e => setName(e.target.value)} />
+                        </div>
+                        <div class="flex-1">
+                            <label class="text-sm text-gray-600">Telefone</label>
+                            <input class="w-full p-2 border rounded mt-1" value={phone} onChange={e => setPhone(e.target.value)} />
+                        </div>
+                        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 h-[42px]">Salvar</button>
+                    </form>
+                    
+                    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-50">
+                                <tr><th class="p-4">Nome</th><th class="p-4">Telefone</th><th class="p-4">Ação</th></tr>
+                            </thead>
+                            <tbody>
+                                {clients.map(c => (
+                                    <tr key={c.id} class="border-t">
+                                        <td class="p-4">{c.name}</td>
+                                        <td class="p-4">{c.phone || '-'}</td>
+                                        <td class="p-4">
+                                            <button onClick={() => deleteClient(c.id)} class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 5. COMPONENTE VENDAS
+        // ==========================================
+        function Sales({ user }) {
+            const [sales, setSales] = useState([]);
+            const [clients, setClients] = useState([]);
+            const [clientId, setClientId] = useState('');
+            const [amount, setAmount] = useState('');
+            const [date, setDate] = useState('');
+
+            useEffect(() => { 
+                fetchSales(); 
+                fetchClients();
+            }, []);
+
+            const fetchClients = async () => {
+                const { data } = await supabase.from('clients').select('id, name');
+                setClients(data || []);
+            };
+
+            const fetchSales = async () => {
+                const { data } = await supabase.from('sales').select('*, clients(name)').order('sale_date', { ascending: false });
+                setSales(data || []);
+            };
+
+            const addSale = async (e) => {
+                e.preventDefault();
+                await supabase.from('sales').insert([{ user_id: user.id, client_id: clientId, amount, sale_date: date }]);
+                setAmount(''); setDate('');
+                fetchSales();
+            };
+
+            return (
+                <div>
+                    <h2 class="text-3xl font-bold mb-6">Vendas</h2>
+                    <form onSubmit={addSale} class="bg-white p-6 rounded-xl shadow-sm mb-8 flex gap-4 items-end">
+                        <div class="flex-1">
+                            <label class="text-sm text-gray-600">Cliente *</label>
+                            <select required class="w-full p-2 border rounded mt-1" value={clientId} onChange={e => setClientId(e.target.value)}>
+                                <option value="">Selecione...</option>
+                                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                        <div class="w-32">
+                            <label class="text-sm text-gray-600">Valor (R$) *</label>
+                            <input type="number" step="0.01" required class="w-full p-2 border rounded mt-1" value={amount} onChange={e => setAmount(e.target.value)} />
+                        </div>
+                        <div class="w-40">
+                            <label class="text-sm text-gray-600">Data *</label>
+                            <input type="date" required class="w-full p-2 border rounded mt-1" value={date} onChange={e => setDate(e.target.value)} />
+                        </div>
+                        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 h-[42px]">Registrar</button>
+                    </form>
+                    
+                    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-50">
+                                <tr><th class="p-4">Data</th><th class="p-4">Cliente</th><th class="p-4">Valor</th></tr>
+                            </thead>
+                            <tbody>
+                                {sales.map(s => (
+                                    <tr key={s.id} class="border-t">
+                                        <td class="p-4">{s.sale_date}</td>
+                                        <td class="p-4">{s.clients?.name || 'Cliente Excluído'}</td>
+                                        <td class="p-4 font-semibold text-green-600">R$ {Number(s.amount).toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==========================================
+        // 6. ESTRUTURA PRINCIPAL (APP)
+        // ==========================================
+        function App() {
+            const [user, setUser] = useState(null);
+            const [route, setRoute] = useState('dashboard');
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                supabase.auth.getSession().then(({ data: { session } }) => {
+                    setUser(session?.user ?? null);
+                    setLoading(false);
+                });
+            }, []);
+
+            if (loading) return <div class="flex h-screen items-center justify-center">Carregando...</div>;
+            if (!user) return <Login onLogin={setUser} />;
+
+            return (
+                <div class="flex h-screen bg-gray-50">
+                    <aside class="w-64 bg-white border-r shadow-sm flex flex-col">
+                        <div class="p-6">
+                            <h1 class="text-2xl font-bold text-blue-600">CRM SaaS</h1>
+                            <p class="text-xs text-gray-400 mt-1">{user.email}</p>
+                        </div>
+                        <nav class="flex-1 px-4 space-y-2 mt-4">
+                            <button onClick={() => setRoute('dashboard')} class={`w-full text-left flex items-center gap-3 p-3 rounded-lg transition-colors ${route === 'dashboard' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100'}`}><i class="fas fa-chart-pie w-5"></i> Dashboard</button>
+                            <button onClick={() => setRoute('clients')} class={`w-full text-left flex items-center gap-3 p-3 rounded-lg transition-colors ${route === 'clients' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100'}`}><i class="fas fa-users w-5"></i> Clientes</button>
+                            <button onClick={() => setRoute('sales')} class={`w-full text-left flex items-center gap-3 p-3 rounded-lg transition-colors ${route === 'sales' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100'}`}><i class="fas fa-dollar-sign w-5"></i> Vendas</button>
+                        </nav>
+                        <div class="p-4 border-t">
+                            <button onClick={() => { supabase.auth.signOut(); setUser(null); }} class="flex items-center gap-3 p-3 w-full text-red-600 hover:bg-red-50 rounded-lg"><i class="fas fa-sign-out-alt w-5"></i> Sair</button>
+                        </div>
+                    </aside>
+
+                    <main class="flex-1 overflow-y-auto p-8">
+                        {route === 'dashboard' && <Dashboard user={user} />}
+                        {route === 'clients' && <Clients user={user} />}
+                        {route === 'sales' && <Sales user={user} />}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
